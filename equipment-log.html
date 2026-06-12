@@ -1,0 +1,433 @@
+<!-- Equipment Log — single-file web app.
+     Logs equipment (name / serial / photo / truck), imports the station
+     asset register (.xlsx) for category + name dropdowns, exports to Excel. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#18181b">
+<title>Equipment Log</title>
+
+<!-- SheetJS: the library that reads and writes Excel files in the browser -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+  /* ====== basic look and feel ====== */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: #f4f4f5;           /* light grey page */
+    color: #18181b;
+    padding-bottom: 90px;          /* room so content never hides under thumbs */
+  }
+  header {
+    background: #18181b;           /* near-black bar */
+    border-bottom: 4px solid #fbbf24;  /* amber stripe */
+    color: #fff;
+    padding: 14px 16px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 20px; text-transform: uppercase; letter-spacing: -0.5px; }
+  main { max-width: 720px; margin: 0 auto; padding: 14px 12px; }
+
+  .card {
+    background: #fff;
+    border: 1px solid #e4e4e7;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .card h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: #71717a; margin-bottom: 12px;
+  }
+
+  /* 16px font on inputs stops iPhones zooming in when you tap a field */
+  label { display: block; font-size: 14px; font-weight: 500; margin: 12px 0 4px; }
+  input[type=text], select {
+    width: 100%; font-size: 16px; padding: 12px;
+    border: 1px solid #d4d4d8; border-radius: 10px; background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid #fbbf24; border-color: #fbbf24; }
+
+  .register-box {
+    background: #fafafa; border: 1px solid #e4e4e7;
+    border-radius: 10px; padding: 12px; margin-bottom: 8px;
+  }
+  .register-box .top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .register-box .title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #71717a; }
+  .register-box .count { font-weight: 400; text-transform: none; color: #a1a1aa; }
+  .linklike { background: none; border: none; font-size: 14px; color: #3f3f46; text-decoration: underline; cursor: pointer; padding: 4px; }
+  .hint { font-size: 12px; color: #71717a; margin-top: 6px; }
+
+  .btn {
+    display: block; width: 100%; border: none; cursor: pointer;
+    font-size: 16px; font-weight: 700; border-radius: 10px; padding: 14px;
+  }
+  .btn-amber { background: #fbbf24; color: #18181b; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 16px; }
+  .btn-amber:active { background: #fcd34d; }
+  .btn-dark { background: #18181b; color: #fff; font-weight: 500; }
+  .btn-dark:active { background: #3f3f46; }
+
+  .photo-row { display: flex; align-items: center; gap: 10px; }
+  .photo-row .btn-dark { flex: 1; }
+  .photo-row img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid #d4d4d8; }
+
+  .error { color: #dc2626; background: #fef2f2; border: 1px solid #fecaca;
+           border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-top: 12px; }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .toolbar select, .toolbar button { flex: 1; padding: 10px; font-size: 15px; border-radius: 10px; }
+  .toolbar button { border: none; background: #18181b; color: #fff; cursor: pointer; }
+
+  .entry {
+    background: #fff; border: 1px solid #e4e4e7; border-radius: 14px;
+    padding: 12px; margin-bottom: 8px;
+    display: flex; gap: 12px; align-items: flex-start;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .entry img, .entry .nophoto { width: 64px; height: 64px; border-radius: 10px; flex-shrink: 0; }
+  .entry img { object-fit: cover; border: 1px solid #e4e4e7; }
+  .entry .nophoto { background: #f4f4f5; border: 1px solid #e4e4e7; color: #a1a1aa;
+                    font-size: 10px; display: flex; align-items: center; justify-content: center; }
+  .entry .info { flex: 1; min-width: 0; }
+  .entry .name { font-weight: 600; font-size: 14px; }
+  .entry .serial { font-family: ui-monospace, monospace; font-size: 12px; color: #52525b; word-break: break-all; margin-top: 2px; }
+  .entry .truck-badge {
+    display: inline-block; background: #18181b; color: #fbbf24;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 6px; margin-top: 6px;
+  }
+  .entry .del { background: none; border: none; color: #a1a1aa; font-size: 16px; cursor: pointer; padding: 8px; }
+  .entry .del:active { color: #dc2626; }
+
+  .empty { border: 2px dashed #d4d4d8; border-radius: 14px; background: #fff;
+           padding: 32px; text-align: center; color: #71717a; font-size: 14px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<header><h1>Equipment Log</h1></header>
+
+<main>
+  <!-- ================= ADD FORM ================= -->
+  <section class="card">
+    <h2>Add equipment</h2>
+
+    <!-- Asset register import + dropdowns -->
+    <div class="register-box">
+      <div class="top">
+        <span class="title">Asset register <span class="count" id="regCount"></span></span>
+        <button class="linklike" onclick="document.getElementById('regFile').click()" id="regBtn">
+          Import register (.xlsx)
+        </button>
+        <input type="file" id="regFile" accept=".xlsx,.xls" class="hidden">
+      </div>
+      <p class="hint" id="regMsg"></p>
+
+      <div id="regDropdowns" class="hidden">
+        <label for="regCategory">Category</label>
+        <select id="regCategory"><option value="">All categories</option></select>
+
+        <label for="regAsset">Asset name (from register)</label>
+        <select id="regAsset"></select>
+      </div>
+    </div>
+
+    <!-- Manual fields (filled automatically when an asset is picked above) -->
+    <label for="fName">Equipment name</label>
+    <input type="text" id="fName" placeholder="e.g. Holmatro spreader">
+
+    <label for="fSerial">Serial number</label>
+    <input type="text" id="fSerial" placeholder="e.g. SN-04421-A" style="font-family:ui-monospace,monospace">
+
+    <label for="fTruck">Assigned truck</label>
+    <input type="text" id="fTruck" list="truckOptions" placeholder="e.g. LK11A1">
+    <datalist id="truckOptions"></datalist>
+
+    <label>Photo</label>
+    <input type="file" id="fPhoto" accept="image/*" capture="environment" class="hidden">
+    <div class="photo-row">
+      <button class="btn btn-dark" onclick="document.getElementById('fPhoto').click()" id="photoBtn">
+        📷 Take / choose photo
+      </button>
+      <img id="photoPreview" class="hidden" alt="Preview">
+    </div>
+
+    <p class="error hidden" id="formError"></p>
+    <button class="btn btn-amber" id="addBtn">Add to log</button>
+  </section>
+
+  <!-- ================= LOGGED LIST ================= -->
+  <section>
+    <div class="card" style="padding:12px">
+      <h2 style="margin-bottom:8px">Logged equipment (<span id="entryCount">0</span>)</h2>
+      <div class="toolbar">
+        <select id="truckFilter"><option>All</option></select>
+        <button id="exportBtn">Export to Excel</button>
+      </div>
+    </div>
+    <div id="entryList"></div>
+  </section>
+</main>
+
+<script>
+/* =====================================================================
+   1. STORAGE — where the data lives.
+   Inside a Claude artifact we use Claude's storage; anywhere else
+   (Vercel, GitHub Pages, just opening the file) we fall back to the
+   browser's localStorage. Both keep data between visits, per device.
+===================================================================== */
+const store = {
+  async get(key) {
+    if (window.storage) {
+      try { const r = await window.storage.get(key); return r ? r.value : null; }
+      catch (e) { return null; }
+    }
+    return localStorage.getItem(key);
+  },
+  async set(key, value) {
+    if (window.storage) { await window.storage.set(key, value); return; }
+    localStorage.setItem(key, value);
+  }
+};
+
+/* App state: two lists kept in memory and mirrored to storage */
+let entries = [];     // the equipment you've logged
+let catalogue = [];   // the imported asset register
+let photoData = null; // the current photo as a compressed base64 string
+
+/* Shorthand for document.getElementById */
+const $ = (id) => document.getElementById(id);
+
+/* =====================================================================
+   2. STARTUP — load anything previously saved, then draw the screen.
+===================================================================== */
+async function init() {
+  const savedEntries = await store.get("equipment-entries");
+  if (savedEntries) entries = JSON.parse(savedEntries);
+  const savedCat = await store.get("asset-catalogue");
+  if (savedCat) catalogue = JSON.parse(savedCat);
+  renderRegister();
+  renderEntries();
+}
+
+/* =====================================================================
+   3. IMPORTING THE ASSET REGISTER (.xlsx)
+   Reads the first sheet, keeps every row that has a Name, and stores
+   name + tag/serial + category + status for the dropdowns.
+===================================================================== */
+$("regFile").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const wb = XLSX.read(ev.target.result, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      catalogue = rows
+        .filter(r => String(r["Name"] || "").trim())
+        .map((r, i) => ({
+          id: "cat-" + i,
+          name: String(r["Name"]).trim(),
+          serial: String(r["Asset: Number"] || "").trim() || String(r["Serial Number"] || "").trim(),
+          category: String(r["Asset: Category"] || "").trim(),
+          status: String(r["Status"] || "").trim(),
+        }));
+      if (!catalogue.length) {
+        $("regMsg").textContent = "No assets found — the file needs 'Name' and 'Asset: Number' columns.";
+        return;
+      }
+      await store.set("asset-catalogue", JSON.stringify(catalogue));
+      $("regMsg").textContent = "Imported " + catalogue.length + " assets from the register.";
+      renderRegister();
+    } catch (err) {
+      $("regMsg").textContent = "Couldn't read that file. Make sure it's the asset register .xlsx.";
+    }
+    e.target.value = "";
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+/* Build the two dropdowns from whatever register is loaded */
+function renderRegister() {
+  if (!catalogue.length) return;
+  $("regCount").textContent = "— " + catalogue.length + " loaded";
+  $("regBtn").textContent = "Re-import";
+  $("regDropdowns").classList.remove("hidden");
+
+  // unique, alphabetical category list
+  const cats = [...new Set(catalogue.map(a => a.category).filter(Boolean))].sort();
+  $("regCategory").innerHTML = '<option value="">All categories</option>' +
+    cats.map(c => `<option>${esc(c)}</option>`).join("");
+  fillAssetDropdown();
+}
+
+/* Fill the asset dropdown, narrowed by the chosen category */
+function fillAssetDropdown() {
+  const cat = $("regCategory").value;
+  const list = catalogue.filter(a => !cat || a.category === cat);
+  $("regAsset").innerHTML =
+    `<option value="" disabled selected>Select an asset… (${list.length})</option>` +
+    list.map(a =>
+      `<option value="${a.id}">${esc(a.name)}${a.serial ? " — " + esc(a.serial) : ""}</option>`
+    ).join("");
+}
+$("regCategory").addEventListener("change", fillAssetDropdown);
+
+/* Picking an asset copies its name + serial into the form fields below */
+$("regAsset").addEventListener("change", (e) => {
+  const a = catalogue.find(x => x.id === e.target.value);
+  if (!a) return;
+  $("fName").value = a.name;
+  $("fSerial").value = a.serial || "No tag/serial on register";
+});
+
+/* =====================================================================
+   4. PHOTO — taken with the camera, then shrunk before saving.
+   Browsers only give a few MB of storage, so we redraw the photo onto
+   a small canvas (max 640px) and save it as a compressed JPEG string.
+===================================================================== */
+$("fPhoto").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 640;
+      let { width, height } = img;
+      if (width > height && width > MAX) { height = Math.round(height * MAX / width); width = MAX; }
+      else if (height > MAX) { width = Math.round(width * MAX / height); height = MAX; }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      photoData = canvas.toDataURL("image/jpeg", 0.65);
+      $("photoPreview").src = photoData;
+      $("photoPreview").classList.remove("hidden");
+      $("photoBtn").textContent = "📷 Retake photo";
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+/* =====================================================================
+   5. ADDING AN ENTRY — checks the three required fields, saves,
+   clears the form, and redraws the list.
+===================================================================== */
+$("addBtn").addEventListener("click", async () => {
+  const name = $("fName").value.trim();
+  const serial = $("fSerial").value.trim();
+  const truck = $("fTruck").value.trim();
+  if (!name || !serial || !truck) {
+    $("formError").textContent = "Name, serial number and truck are all required.";
+    $("formError").classList.remove("hidden");
+    return;
+  }
+  $("formError").classList.add("hidden");
+
+  entries.unshift({                       // unshift = add to the TOP of the list
+    id: Date.now().toString(36),          // quick unique id from the clock
+    name, serial, truck,
+    photo: photoData,
+    added: new Date().toISOString(),
+  });
+  try {
+    await store.set("equipment-entries", JSON.stringify(entries));
+  } catch (e) {
+    $("formError").textContent = "Couldn't save — storage may be full. Delete old entries.";
+    $("formError").classList.remove("hidden");
+  }
+
+  // reset the form for the next item
+  $("fName").value = ""; $("fSerial").value = ""; $("fTruck").value = "";
+  photoData = null;
+  $("photoPreview").classList.add("hidden");
+  $("photoBtn").textContent = "📷 Take / choose photo";
+  renderEntries();
+});
+
+/* Deleting an entry */
+async function deleteEntry(id) {
+  entries = entries.filter(e => e.id !== id);
+  await store.set("equipment-entries", JSON.stringify(entries));
+  renderEntries();
+}
+
+/* =====================================================================
+   6. DRAWING THE LIST — rebuilds the cards, the truck filter, and the
+   truck name suggestions every time something changes.
+===================================================================== */
+function renderEntries() {
+  const trucks = [...new Set(entries.map(e => e.truck))].sort();
+
+  // truck suggestions while typing
+  $("truckOptions").innerHTML = trucks.map(t => `<option value="${esc(t)}">`).join("");
+
+  // filter dropdown (keeps your current choice if it still exists)
+  const current = $("truckFilter").value || "All";
+  $("truckFilter").innerHTML = "<option>All</option>" + trucks.map(t => `<option>${esc(t)}</option>`).join("");
+  $("truckFilter").value = trucks.includes(current) ? current : "All";
+
+  const visible = $("truckFilter").value === "All"
+    ? entries
+    : entries.filter(e => e.truck === $("truckFilter").value);
+
+  $("entryCount").textContent = visible.length;
+
+  if (!visible.length) {
+    $("entryList").innerHTML = '<div class="empty">No equipment logged yet. Add your first item above.</div>';
+    return;
+  }
+  $("entryList").innerHTML = visible.map(e => `
+    <div class="entry">
+      ${e.photo
+        ? `<img src="${e.photo}" alt="${esc(e.name)}">`
+        : `<div class="nophoto">No photo</div>`}
+      <div class="info">
+        <div class="name">${esc(e.name)}</div>
+        <div class="serial">${esc(e.serial)}</div>
+        <span class="truck-badge">${esc(e.truck)}</span>
+      </div>
+      <button class="del" onclick="deleteEntry('${e.id}')" title="Delete">✕</button>
+    </div>
+  `).join("");
+}
+$("truckFilter").addEventListener("change", renderEntries);
+
+/* =====================================================================
+   7. EXPORT TO EXCEL — turns the (filtered) list into rows and lets
+   SheetJS build and download a real .xlsx file.
+===================================================================== */
+$("exportBtn").addEventListener("click", () => {
+  if (!entries.length) return;
+  const filter = $("truckFilter").value;
+  const list = filter === "All" ? entries : entries.filter(e => e.truck === filter);
+  const rows = list.map(e => ({
+    "Equipment name": e.name,
+    "Serial number": e.serial,
+    "Assigned truck": e.truck,
+    "Photo on file": e.photo ? "Yes" : "No",
+    "Date added": new Date(e.added).toLocaleDateString("en-GB"),
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = [{wch:28},{wch:18},{wch:16},{wch:12},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Equipment");
+  XLSX.writeFile(wb, filter === "All" ? "equipment-log.xlsx" : `equipment-log-${filter.replace(/\s+/g,"-")}.xlsx`);
+});
+
+/* Small helper: stops odd characters in names (like < or ") breaking the page */
+function esc(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+init();
+</script>
+</body>
+</html>
